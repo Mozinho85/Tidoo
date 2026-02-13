@@ -12,10 +12,16 @@ import {
   Badge,
   Autocomplete,
   Paper,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import MapIcon from '@mui/icons-material/Map';
 import ListIcon from '@mui/icons-material/ViewList';
+import AddLocationAltIcon from '@mui/icons-material/AddLocationAlt';
 import { Map, AdvancedMarker, Pin, useMap } from '@vis.gl/react-google-maps';
 import { useApp } from '../AppContext.tsx';
 import { searchPlaces, autocomplete, type AutocompleteSuggestion } from '../api.ts';
@@ -35,7 +41,7 @@ const CATEGORY_CHIPS = [
 ];
 
 export default function ExplorePage() {
-  const { userLocation, locationError, requestLocation, activeItinerary } = useApp();
+  const { userLocation, locationError, requestLocation, activeItinerary, addPlace } = useApp();
   const [places, setPlaces] = useState<Place[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -46,6 +52,33 @@ export default function ExplorePage() {
   const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const map = useMap();
+
+  // Custom pin state
+  const [customPinCoords, setCustomPinCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [customPinName, setCustomPinName] = useState('');
+  const [customPinDialogOpen, setCustomPinDialogOpen] = useState(false);
+
+  const handleMapClick = useCallback((event: { detail: { latLng?: { lat: number; lng: number } | null } }) => {
+    const latLng = event.detail.latLng;
+    if (!latLng) return;
+    setCustomPinCoords({ lat: latLng.lat, lng: latLng.lng });
+    setCustomPinName('');
+    setCustomPinDialogOpen(true);
+  }, []);
+
+  const handleAddCustomPin = useCallback(() => {
+    if (!customPinCoords) return;
+    const name = customPinName.trim() || 'Custom Pin';
+    const place: Place = {
+      id: `custom-pin-${Date.now()}`,
+      displayName: { text: name, languageCode: 'en' },
+      formattedAddress: `${customPinCoords.lat.toFixed(5)}, ${customPinCoords.lng.toFixed(5)}`,
+      location: { latitude: customPinCoords.lat, longitude: customPinCoords.lng },
+    };
+    addPlace(place);
+    setCustomPinDialogOpen(false);
+    setCustomPinCoords(null);
+  }, [customPinCoords, customPinName, addPlace]);
 
   // Autocomplete as user types
   useEffect(() => {
@@ -220,6 +253,7 @@ export default function ExplorePage() {
               gestureHandling="greedy"
               disableDefaultUI={false}
               style={{ width: '100%', height: '100%' }}
+              onClick={handleMapClick}
             >
               {/* User location marker */}
               <AdvancedMarker position={userLocation}>
@@ -306,6 +340,41 @@ export default function ExplorePage() {
         place={selectedPlace}
         onClose={() => setSelectedPlace(null)}
       />
+
+      {/* Custom pin dialog */}
+      <Dialog
+        open={customPinDialogOpen}
+        onClose={() => setCustomPinDialogOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <AddLocationAltIcon color="primary" />
+          Add Point to Itinerary
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {customPinCoords
+              ? `${customPinCoords.lat.toFixed(5)}, ${customPinCoords.lng.toFixed(5)}`
+              : ''}
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            label="Place Name (optional)"
+            placeholder="e.g. Meeting Point, Parking Spot..."
+            value={customPinName}
+            onChange={(e) => setCustomPinName(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleAddCustomPin()}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCustomPinDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleAddCustomPin} variant="contained">
+            Add to Itinerary
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
