@@ -45,6 +45,8 @@ import TripOriginIcon from '@mui/icons-material/TripOrigin';
 import FlagIcon from '@mui/icons-material/Flag';
 import MyLocationIcon from '@mui/icons-material/MyLocation';
 import AddLocationAltIcon from '@mui/icons-material/AddLocationAlt';
+import NavigationIcon from '@mui/icons-material/Navigation';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import {
   DndContext,
   closestCenter,
@@ -71,6 +73,33 @@ function createCurrentLocationPlace(lat: number, lng: number): Place {
     formattedAddress: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
     location: { latitude: lat, longitude: lng },
   };
+}
+
+const GOOGLE_MAPS_TRAVEL_MODES: Record<TravelMode, string> = {
+  DRIVE: 'driving',
+  WALK: 'walking',
+  BICYCLE: 'bicycling',
+  TRANSIT: 'transit',
+};
+
+function buildGoogleMapsUrl(
+  origin: { latitude: number; longitude: number },
+  destination: { latitude: number; longitude: number },
+  waypoints: Array<{ latitude: number; longitude: number }>,
+  travelMode: TravelMode,
+): string {
+  const params = new URLSearchParams();
+  params.set('api', '1');
+  params.set('origin', `${origin.latitude},${origin.longitude}`);
+  params.set('destination', `${destination.latitude},${destination.longitude}`);
+  params.set('travelmode', GOOGLE_MAPS_TRAVEL_MODES[travelMode]);
+  if (waypoints.length > 0) {
+    params.set(
+      'waypoints',
+      waypoints.map((w) => `${w.latitude},${w.longitude}`).join('|'),
+    );
+  }
+  return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
 const TRAVEL_MODE_ICONS: Record<TravelMode, React.ReactNode> = {
@@ -103,11 +132,13 @@ function SortablePlace({
   index,
   leg,
   onRemove,
+  onNavigateFrom,
 }: {
   item: ItineraryPlace;
   index: number;
   leg?: RouteLeg;
   onRemove: (id: string) => void;
+  onNavigateFrom: (index: number) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: item.place.id });
@@ -148,6 +179,12 @@ function SortablePlace({
             {item.place.formattedAddress}
           </Typography>
         </CardContent>
+
+        <Tooltip title="Navigate from here">
+          <IconButton size="small" onClick={() => onNavigateFrom(index)} color="primary">
+            <NavigationIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
 
         <IconButton size="small" onClick={() => onRemove(item.place.id)} color="error">
           <DeleteIcon fontSize="small" />
@@ -418,6 +455,41 @@ export default function ItineraryPage() {
 
   const { places } = activeItinerary;
 
+  // Navigate from a specific stop index onward via Google Maps
+  const handleNavigateFrom = useCallback(
+    (fromIndex: number) => {
+      const remaining = places.slice(fromIndex);
+      if (remaining.length === 0) return;
+
+      const origin = remaining[0].place.location;
+      const endLoc = activeItinerary.endLocation ?? activeItinerary.startLocation;
+      const destination = remaining.length > 1
+        ? remaining[remaining.length - 1].place.location
+        : endLoc?.location ?? origin;
+      const waypoints = remaining.length > 1
+        ? remaining.slice(1, -1).map((p) => p.place.location)
+        : [];
+
+      const url = buildGoogleMapsUrl(origin, destination, waypoints, activeItinerary.travelMode);
+      window.open(url, '_blank');
+    },
+    [places, activeItinerary.endLocation, activeItinerary.startLocation, activeItinerary.travelMode],
+  );
+
+  // Export full route to Google Maps
+  const handleExportRoute = useCallback(() => {
+    const startLoc = activeItinerary.startLocation;
+    const endLoc = activeItinerary.endLocation ?? startLoc;
+    if (!startLoc || places.length === 0) return;
+
+    const origin = startLoc.location;
+    const destination = endLoc?.location ?? origin;
+    const waypoints = places.map((p) => p.place.location);
+
+    const url = buildGoogleMapsUrl(origin, destination, waypoints, activeItinerary.travelMode);
+    window.open(url, '_blank');
+  }, [activeItinerary.startLocation, activeItinerary.endLocation, places, activeItinerary.travelMode]);
+
   return (
     <Box sx={{ p: 2, pb: 10, maxWidth: 600, mx: 'auto' }}>
       {/* Header */}
@@ -563,6 +635,7 @@ export default function ItineraryPage() {
                   index={idx}
                   leg={routeLegs[idx]}
                   onRemove={removePlace}
+                  onNavigateFrom={handleNavigateFrom}
                 />
               ))}
             </Stack>
@@ -606,6 +679,20 @@ export default function ItineraryPage() {
           sx={{ mt: 2 }}
         >
           {optimizing ? 'Optimizing...' : 'Optimize Route'}
+        </Button>
+      )}
+
+      {/* Export to Google Maps */}
+      {places.length >= 1 && activeItinerary.startLocation && (
+        <Button
+          fullWidth
+          variant="outlined"
+          size="large"
+          startIcon={<OpenInNewIcon />}
+          onClick={handleExportRoute}
+          sx={{ mt: 1 }}
+        >
+          Open in Google Maps
         </Button>
       )}
 
