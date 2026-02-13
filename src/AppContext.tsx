@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import type { Place, Itinerary, ItineraryPlace, TravelMode } from './types.ts';
+import type { Place, Itinerary, ItineraryPlace, ItineraryEndpoint, TravelMode } from './types.ts';
 import { saveItinerary, getAllItineraries, deleteItinerary as dbDelete } from './db.ts';
 
 interface AppState {
@@ -15,6 +15,9 @@ interface AppState {
   removePlace: (placeId: string) => void;
   reorderPlaces: (places: ItineraryPlace[]) => void;
   setTravelMode: (mode: TravelMode) => void;
+  setStartLocation: (endpoint: ItineraryEndpoint | undefined) => void;
+  setEndLocation: (endpoint: ItineraryEndpoint | undefined) => void;
+  setSameStartEnd: (same: boolean) => void;
   clearItinerary: () => void;
   isPlaceInItinerary: (placeId: string) => boolean;
 
@@ -34,6 +37,7 @@ function createEmptyItinerary(): Itinerary {
     name: 'New Itinerary',
     places: [],
     travelMode: 'DRIVE',
+    sameStartEnd: true,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
@@ -110,6 +114,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setActiveItinerary((prev) => ({ ...prev, travelMode: mode, updatedAt: new Date().toISOString() }));
   }, []);
 
+  const setStartLocation = useCallback((endpoint: ItineraryEndpoint | undefined) => {
+    setActiveItinerary((prev) => {
+      const update: Partial<Itinerary> = { startLocation: endpoint, updatedAt: new Date().toISOString() };
+      if (prev.sameStartEnd) update.endLocation = endpoint;
+      return { ...prev, ...update };
+    });
+  }, []);
+
+  const setEndLocation = useCallback((endpoint: ItineraryEndpoint | undefined) => {
+    setActiveItinerary((prev) => ({ ...prev, endLocation: endpoint, updatedAt: new Date().toISOString() }));
+  }, []);
+
+  const setSameStartEnd = useCallback((same: boolean) => {
+    setActiveItinerary((prev) => {
+      const update: Partial<Itinerary> = { sameStartEnd: same, updatedAt: new Date().toISOString() };
+      if (same) update.endLocation = prev.startLocation;
+      return { ...prev, ...update };
+    });
+  }, []);
+
   const clearItinerary = useCallback(() => {
     setActiveItinerary(createEmptyItinerary());
   }, []);
@@ -151,6 +175,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         removePlace,
         reorderPlaces,
         setTravelMode,
+        setStartLocation,
+        setEndLocation,
+        setSameStartEnd,
         clearItinerary,
         isPlaceInItinerary,
         savedItineraries,

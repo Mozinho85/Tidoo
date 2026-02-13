@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import {
   Box,
   Typography,
@@ -25,6 +25,10 @@ import {
   ListItemText,
   ListItemSecondaryAction,
   Tooltip,
+  Autocomplete,
+  FormControlLabel,
+  Checkbox,
+  Paper,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import DragIndicatorIcon from '@mui/icons-material/DragIndicator';
@@ -37,6 +41,9 @@ import DirectionsWalkIcon from '@mui/icons-material/DirectionsWalk';
 import DirectionsBikeIcon from '@mui/icons-material/DirectionsBike';
 import DirectionsTransitIcon from '@mui/icons-material/DirectionsTransit';
 import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
+import TripOriginIcon from '@mui/icons-material/TripOrigin';
+import FlagIcon from '@mui/icons-material/Flag';
+import MyLocationIcon from '@mui/icons-material/MyLocation';
 import {
   DndContext,
   closestCenter,
@@ -53,8 +60,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useApp } from '../AppContext.tsx';
-import { computeRoute } from '../api.ts';
-import type { ItineraryPlace, TravelMode, RouteLeg } from '../types.ts';
+import { computeRoute, autocomplete as apiAutocomplete, getPlaceDetails } from '../api.ts';
+import type { ItineraryPlace, ItineraryEndpoint, TravelMode, RouteLeg } from '../types.ts';
 
 const TRAVEL_MODE_ICONS: Record<TravelMode, React.ReactNode> = {
   DRIVE: <DirectionsCarIcon fontSize="small" />,
@@ -153,6 +160,137 @@ function SortablePlace({
   );
 }
 
+// ─── Location Picker ─────────────────────────────────────────────
+
+interface LocationOption {
+  label: string;
+  placeId?: string;
+  location?: { latitude: number; longitude: number };
+  type: 'current' | 'place';
+}
+
+function LocationPicker({
+  label,
+  value,
+  onChange,
+  userLocation,
+  icon,
+  disabled,
+}: {
+  label: string;
+  value?: ItineraryEndpoint;
+  onChange: (endpoint: ItineraryEndpoint | undefined) => void;
+  userLocation: { lat: number; lng: number } | null;
+  icon: React.ReactNode;
+  disabled?: boolean;
+}) {
+  const [inputValue, setInputValue] = useState(value?.label ?? '');
+  const [options, setOptions] = useState<LocationOption[]>([]);
+  const [loading, setLoading] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+
+  // Build the "current location" option
+  const currentLocOption: LocationOption | null = userLocation
+    ? { label: 'Current Location', type: 'current', location: { latitude: userLocation.lat, longitude: userLocation.lng } }
+    : null;
+
+  // Sync external value changes
+  useEffect(() => {
+    setInputValue(value?.label ?? '');
+  }, [value]);
+
+  const handleInputChange = (_: unknown, newInput: string) => {
+    setInputValue(newInput);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    if (newInput.length < 2) {
+      setOptions(currentLocOption ? [currentLocOption] : []);
+      return;
+    }
+
+    debounceRef.current = setTimeout(async () => {
+      setLoading(true);
+      try {
+        const suggestions = await apiAutocomplete(newInput, userLocation ?? undefined);
+        const placeOptions: LocationOption[] = suggestions
+          .filter((s) => s.placePrediction)
+          .map((s) => ({
+            label: s.placePrediction!.text.text,
+            placeId: s.placePrediction!.placeId,
+            type: 'place' as const,
+          }));
+        setOptions([
+          ...(currentLocOption ? [currentLocOption] : []),
+          ...placeOptions,
+        ]);
+      } catch {
+        setOptions(currentLocOption ? [currentLocOption] : []);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+  };
+
+  const handleChange = async (_: unknown, option: string | LocationOption | null) => {
+    if (!option || typeof option === 'string') {
+      onChange(undefined);
+      return;
+    }
+    if (option.type === 'current' && option.location) {
+      onChange({ label: 'Current Location', location: option.location });
+    } else if (option.type === 'place' && option.placeId) {
+      try {
+        const details = await getPlaceDetails(option.placeId);
+        onChange({ label: option.label, location: details.location });
+      } catch {
+        // fallback: keep label but no location
+      }
+    }
+  };
+
+  const selectedOption: LocationOption | null = value
+    ? { label: value.label, type: value.label === 'Current Location' ? 'current' : 'place' }
+    : null;
+
+  return (
+    <Autocomplete<LocationOption, false, false, true>
+      freeSolo
+      disabled={disabled}
+      options={options}
+      loading={loading}
+      value={selectedOption}
+      inputValue={inputValue}
+      onInputChange={handleInputChange}
+      onChange={handleChange}
+      getOptionLabel={(opt) => (typeof opt === 'string' ? opt : opt.label)}
+      isOptionEqualToValue={(opt, val) => opt.label === val.label}
+      filterOptions={(x) => x}
+      renderOption={(props, option) => (
+        <li {...props} key={option.placeId ?? option.type}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            {option.type === 'current' ? (
+              <MyLocationIcon fontSize="small" color="primary" />
+            ) : null}
+            <Typography variant="body2">{option.label}</Typography>
+          </Stack>
+        </li>
+      )}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label={label}
+          size="small"
+          InputProps={{
+            ...params.InputProps,
+            startAdornment: icon,
+          }}
+        />
+      )}
+      sx={{ flex: 1 }}
+    />
+  );
+}
+
 // ─── Itinerary Page ──────────────────────────────────────────────
 
 export default function ItineraryPage() {
@@ -161,6 +299,9 @@ export default function ItineraryPage() {
     removePlace,
     reorderPlaces,
     setTravelMode,
+    setStartLocation,
+    setEndLocation,
+    setSameStartEnd,
     clearItinerary,
     userLocation,
     saveCurrentItinerary,
@@ -202,12 +343,15 @@ export default function ItineraryPage() {
   );
 
   const handleOptimize = async () => {
-    if (!userLocation) {
-      setRouteError('Location required for route optimization');
+    const startLoc = activeItinerary.startLocation;
+    const endLoc = activeItinerary.endLocation ?? startLoc;
+
+    if (!startLoc) {
+      setRouteError('Set a start location before optimizing');
       return;
     }
-    if (activeItinerary.places.length < 2) {
-      setRouteError('Add at least 2 places to optimize');
+    if (activeItinerary.places.length < 1) {
+      setRouteError('Add at least 1 place to optimize');
       return;
     }
 
@@ -216,22 +360,21 @@ export default function ItineraryPage() {
 
     try {
       const places = activeItinerary.places;
-      const origin = userLocation;
-      const destination = {
-        lat: places[places.length - 1].place.location.latitude,
-        lng: places[places.length - 1].place.location.longitude,
-      };
-      const intermediates = places.slice(0, -1).map((p) => ({
+      const origin = { lat: startLoc.location.latitude, lng: startLoc.location.longitude };
+      const dest = endLoc
+        ? { lat: endLoc.location.latitude, lng: endLoc.location.longitude }
+        : origin;
+      const intermediates = places.map((p) => ({
         lat: p.place.location.latitude,
         lng: p.place.location.longitude,
       }));
 
       const result = await computeRoute(
         origin,
-        destination,
+        dest,
         intermediates,
         activeItinerary.travelMode,
-        true,
+        intermediates.length > 1,
       );
 
       if (result.routes?.[0]) {
@@ -240,12 +383,9 @@ export default function ItineraryPage() {
         // Reorder places based on optimized order
         if (route.optimizedIntermediateWaypointIndex) {
           const reordered: ItineraryPlace[] = [];
-          const intermediatesOnly = places.slice(0, -1);
           for (const idx of route.optimizedIntermediateWaypointIndex) {
-            reordered.push(intermediatesOnly[idx]);
+            reordered.push(places[idx]);
           }
-          // Add the destination (last place) back
-          reordered.push(places[places.length - 1]);
           reorderPlaces(reordered);
         }
 
@@ -323,6 +463,42 @@ export default function ItineraryPage() {
         </Select>
       </FormControl>
 
+      {/* Start / End Location */}
+      <Paper variant="outlined" sx={{ p: 2, mb: 2, borderRadius: 2 }}>
+        <Stack spacing={2}>
+          <LocationPicker
+            label="Start Location"
+            value={activeItinerary.startLocation}
+            onChange={setStartLocation}
+            userLocation={userLocation}
+            icon={<TripOriginIcon fontSize="small" color="success" sx={{ mr: 0.5 }} />}
+          />
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={activeItinerary.sameStartEnd}
+                onChange={(e) => setSameStartEnd(e.target.checked)}
+                size="small"
+              />
+            }
+            label={
+              <Typography variant="body2" color="text.secondary">
+                Return to start location
+              </Typography>
+            }
+          />
+          {!activeItinerary.sameStartEnd && (
+            <LocationPicker
+              label="End Location"
+              value={activeItinerary.endLocation}
+              onChange={setEndLocation}
+              userLocation={userLocation}
+              icon={<FlagIcon fontSize="small" color="error" sx={{ mr: 0.5 }} />}
+            />
+          )}
+        </Stack>
+      </Paper>
+
       {/* Empty state */}
       {places.length === 0 && (
         <Box sx={{ textAlign: 'center', py: 8 }}>
@@ -383,7 +559,7 @@ export default function ItineraryPage() {
       )}
 
       {/* Optimize button */}
-      {places.length >= 2 && (
+      {places.length >= 1 && activeItinerary.startLocation && (
         <Button
           fullWidth
           variant="contained"

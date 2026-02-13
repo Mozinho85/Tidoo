@@ -54,11 +54,19 @@ export interface ItineraryPlace {
   notes?: string;
 }
 
+export interface ItineraryEndpoint {
+  label: string;
+  location: PlaceLocation;
+}
+
 export interface Itinerary {
   id: string;
   name: string;
   places: ItineraryPlace[];
   travelMode: TravelMode;
+  startLocation?: ItineraryEndpoint;
+  endLocation?: ItineraryEndpoint;
+  sameStartEnd: boolean;
   createdAt: string;
   updatedAt: string;
   totalDuration?: string;
