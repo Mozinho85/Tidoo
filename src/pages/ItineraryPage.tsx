@@ -44,6 +44,7 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import TripOriginIcon from '@mui/icons-material/TripOrigin';
 import FlagIcon from '@mui/icons-material/Flag';
 import MyLocationIcon from '@mui/icons-material/MyLocation';
+import AddLocationAltIcon from '@mui/icons-material/AddLocationAlt';
 import {
   DndContext,
   closestCenter,
@@ -61,7 +62,16 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useApp } from '../AppContext.tsx';
 import { computeRoute, autocomplete as apiAutocomplete, getPlaceDetails } from '../api.ts';
-import type { ItineraryPlace, ItineraryEndpoint, TravelMode, RouteLeg } from '../types.ts';
+import type { ItineraryPlace, ItineraryEndpoint, TravelMode, RouteLeg, Place } from '../types.ts';
+
+function createCurrentLocationPlace(lat: number, lng: number): Place {
+  return {
+    id: `current-location-${Date.now()}`,
+    displayName: { text: 'Current Location', languageCode: 'en' },
+    formattedAddress: `${lat.toFixed(5)}, ${lng.toFixed(5)}`,
+    location: { latitude: lat, longitude: lng },
+  };
+}
 
 const TRAVEL_MODE_ICONS: Record<TravelMode, React.ReactNode> = {
   DRIVE: <DirectionsCarIcon fontSize="small" />,
@@ -296,6 +306,7 @@ function LocationPicker({
 export default function ItineraryPage() {
   const {
     activeItinerary,
+    addPlace,
     removePlace,
     reorderPlaces,
     setTravelMode,
@@ -509,6 +520,31 @@ export default function ItineraryPage() {
           <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
             Explore and add places to build your itinerary.
           </Typography>
+          {userLocation && (
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<AddLocationAltIcon />}
+              onClick={() => addPlace(createCurrentLocationPlace(userLocation.lat, userLocation.lng))}
+              sx={{ mt: 2 }}
+            >
+              Add Current Location
+            </Button>
+          )}
+        </Box>
+      )}
+
+      {/* Add current location button (when list has items) */}
+      {places.length > 0 && userLocation && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: 1, mt: 1 }}>
+          <Button
+            variant="text"
+            size="small"
+            startIcon={<AddLocationAltIcon />}
+            onClick={() => addPlace(createCurrentLocationPlace(userLocation.lat, userLocation.lng))}
+          >
+            Add Current Location
+          </Button>
         </Box>
       )}
 
